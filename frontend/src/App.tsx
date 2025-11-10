@@ -1,21 +1,10 @@
-// frontend/src/App.tsx
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import Canvas from "./components/Canvas";
 import "./styles.css";
 
-/**
- * App.tsx — unified React version of play.html behavior
- * - Commit -> auto-generate clientSeed and display commitHex
- * - Start -> uses clientSeed, bet, dropColumn; draws path from API path
- * - Reveal -> calls reveal and stores displayed serverSeed
- * - Regenerate client seed button
- * - Keyboard controls: ← / → / Space / M / T / G
- * - imports shared styles.css
- */
-
 const api = axios.create({
-  baseURL: "https://fair-plinko.onrender.com",
+  baseURL: "http://localhost:4000", // local dev
 });
 
 type PegMap = number[][];
@@ -32,7 +21,7 @@ export default function App() {
   const [serverSeed, setServerSeed] = useState<string | null>(null);
   const [commitHex, setCommitHex] = useState<string | null>(null);
 
-  const [muted, setMuted] = useState<boolean>(() => {
+  const [muted, setMutedState] = useState<boolean>(() => {
     try {
       return localStorage.getItem("muted") === "1";
     } catch {
@@ -43,82 +32,68 @@ export default function App() {
   const [debug, setDebug] = useState(false);
   const [reducedMotion, setReducedMotion] = useState<boolean>(() => {
     return (
-      window.matchMedia && window.matchMedia("(prefers-reduced-motion)").matches
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion)").matches
     );
   });
 
-  // Keyboard controls: arrows, space, m, t, g
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "ArrowLeft") {
-        setDropColumn((d) => Math.max(0, d - 1));
-        e.preventDefault();
-      } else if (e.key === "ArrowRight") {
-        setDropColumn((d) => Math.min(12, d + 1));
-        e.preventDefault();
-      } else if (e.code === "Space") {
-        e.preventDefault();
-        startRound();
-      } else if (e.key.toLowerCase() === "m") {
-        setMuted((m) => {
-          const nm = !m;
-          localStorage.setItem("muted", nm ? "1" : "0");
-          return nm;
-        });
-      } else if (e.key.toLowerCase() === "t") {
-        setTilt((t) => !t);
-      } else if (e.key.toLowerCase() === "g") {
-        setDebug((d) => !d);
+  const startRef = useRef<() => Promise<void> | void>(() => {});
+  const commitRef = useRef<() => Promise<void> | void>(() => {});
+  const revealRef = useRef<() => Promise<void> | void>(() => {});
+  const inputFocusRef = useRef<boolean>(false);
+
+  // Copy helper
+  const copyToClipboard = async (text: string | null, label = "Value") => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      alert(`${label} copied to clipboard ✅`);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        alert(`${label} copied to clipboard ✅`);
+      } catch {
+        alert(`Copy failed — please copy manually`);
       }
+      document.body.removeChild(ta);
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    // Always blur to re-enable keyboard controls
+    (document.activeElement as HTMLElement)?.blur();
+    inputFocusRef.current = false;
+  };
 
-  // Prefers reduced motion listener
-  useEffect(() => {
-    const mq =
-      window.matchMedia && window.matchMedia("(prefers-reduced-motion)");
-    if (!mq) return;
-    const f = (ev: MediaQueryListEvent) => setReducedMotion(ev.matches);
-    mq.addEventListener("change", f);
-    return () => mq.removeEventListener("change", f);
-  }, []);
-
-  // Commit: server creates serverSeed+nonce and stores commitHex.
-  // We use commit response to show commitHex and auto-generate clientSeed.
-  async function commitRound() {
+  // Commit round
+  const commitRound = useCallback(async () => {
     try {
       const res = await api.post("/api/rounds/commit");
       setRoundId(res.data.roundId);
       setCommitHex(res.data.commitHex || null);
-
-      // Auto-generate a client seed and set it in UI so user can use it for start
       const newClient = "player-" + Math.random().toString(16).slice(2, 8);
       setClientSeed(newClient);
-
-      // clear previous serverSeed (not revealed yet)
       setServerSeed(null);
-      // keep UX feedback lightweight — also set pegMap/path reset
       setPegMap([]);
       setPath([]);
       setBin(null);
       alert(
-        "✅ Round committed: " +
-          res.data.roundId +
-          "\nCommit: " +
-          (res.data.commitHex || "—")
+        `✅ Round committed:\n${res.data.roundId}\nCommit: ${
+          res.data.commitHex || "—"
+        }`
       );
     } catch (err: any) {
-      console.error(err);
+      console.error("Commit failed:", err);
       alert(
         "❌ Commit failed: " + (err?.response?.data?.error || err?.message)
       );
     }
-  }
+  }, []);
 
-  // Start round: sends clientSeed + betCents + dropColumn -> backend returns deterministic pegMap, path, binIndex
-  async function startRound() {
+  // Start round
+  const startRound = useCallback(async () => {
     if (!roundId) {
       alert("Please create a round (commit) first.");
       return;
@@ -134,7 +109,6 @@ export default function App() {
       setPath(res.data.path || []);
       setBin(res.data.binIndex ?? null);
 
-      // optional audio cue on landing
       if (!muted) {
         try {
           const s = new Audio("/assets/land.wav");
@@ -145,31 +119,33 @@ export default function App() {
     } catch (err: any) {
       console.error("Start round failed:", err);
       alert(
-        "Error starting round: " + (err.response?.data?.error || err.message)
+        "Error starting round: " + (err?.response?.data?.error || err?.message)
       );
     }
-  }
+  }, [roundId, clientSeed, betCents, dropColumn, muted]);
 
-  // Reveal: sends serverSeed to server to mark round REVEALED (serverSeed is persisted)
-  // If your backend returns serverSeed, store it and show to user.
-  async function revealRound() {
+  // Reveal round
+  const revealRound = useCallback(async () => {
     if (!roundId) {
-      alert("no roundId");
+      alert("No roundId found");
       return;
     }
-    // reveal may require user to paste serverSeed OR the endpoint may reveal serverSeed from server side.
-    // Here we call reveal endpoint without body; backend may reveal stored serverSeed automatically for security.
     try {
       const res = await api.post(`/api/rounds/${roundId}/reveal`, {});
       setServerSeed(res.data.serverSeed || null);
-      alert("✅ Round revealed!");
+      if (!res.data.serverSeed)
+        alert("⚠️ No serverSeed revealed — check backend logs!");
+      else alert("✅ Round revealed!");
     } catch (err: any) {
-      alert("❌ Reveal failed: " + (err.response?.data?.error || err?.message));
+      console.error("Reveal failed:", err);
+      alert(
+        "❌ Reveal failed: " + (err?.response?.data?.error || err?.message)
+      );
     }
-  }
+  }, [roundId]);
 
-  // Open verifier (simple prompt-based) — calls /api/verify with inputs and shows returned recomputed values.
-  async function openVerifier() {
+  // Verifier
+  const openVerifier = async () => {
     const server = prompt("serverSeed:");
     const client = prompt("clientSeed:");
     const nonce = prompt("nonce:");
@@ -184,27 +160,83 @@ export default function App() {
         )}&dropColumn=${encodeURIComponent(drop)}`
       );
       alert(
-        `Verifier result: commitHex=${res.data.commitHex}, binIndex=${res.data.binIndex}`
+        `Verifier result:\nCommit: ${res.data.commitHex}\nBin Index: ${res.data.binIndex}`
       );
       setPegMap(res.data.pegMap || []);
       setPath(res.data.path || []);
       setBin(res.data.binIndex ?? null);
     } catch (err: any) {
-      alert("Verifier failed: " + (err.response?.data?.error || err?.message));
+      alert(
+        "❌ Verifier failed: " + (err.response?.data?.error || err.message)
+      );
     }
-  }
+  };
 
-  function regenerateClientSeed() {
-    const newClient = "player-" + Math.random().toString(16).slice(2, 8);
-    setClientSeed(newClient);
-  }
+  useEffect(() => {
+    startRef.current = startRound;
+    commitRef.current = commitRound;
+    revealRef.current = revealRound;
+  }, [startRound, commitRound, revealRound]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (inputFocusRef.current) return;
+      const key = e.key.toLowerCase();
+      if (key === "arrowleft") {
+        setDropColumn((d) => Math.max(0, d - 1));
+        e.preventDefault();
+      } else if (key === "arrowright") {
+        setDropColumn((d) => Math.min(12, d + 1));
+        e.preventDefault();
+      } else if (key === " " || e.code === "Space") {
+        e.preventDefault();
+        void startRef.current?.();
+      } else if (key === "m") {
+        setMutedState((m) => {
+          const nm = !m;
+          localStorage.setItem("muted", nm ? "1" : "0");
+          return nm;
+        });
+      } else if (key === "t") {
+        setTilt((t) => !t);
+      } else if (key === "g") {
+        setDebug((d) => !d);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Reduced motion listener
+  useEffect(() => {
+    const mq =
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia("(prefers-reduced-motion)")
+        : null;
+    if (!mq) return;
+    const f = (ev: MediaQueryListEvent) => setReducedMotion(ev.matches);
+    mq.addEventListener("change", f);
+    return () => mq.removeEventListener("change", f);
+  }, []);
+
+  const onInputFocus = () => (inputFocusRef.current = true);
+  const onInputBlur = () => (inputFocusRef.current = false);
+  const regenerateClientSeed = () =>
+    setClientSeed("player-" + Math.random().toString(16).slice(2, 8));
 
   return (
     <div style={{ padding: 20 }}>
-      <h2>Plinko (Demo) — ← → space(drop), M mute, T tilt, G debug</h2>
+      <h2>Plinko (Demo) — ← → Space(drop), M mute, T tilt, G debug</h2>
 
       <div
-        style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}
+        style={{
+          display: "flex",
+          gap: 12,
+          marginBottom: 12,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
       >
         <label>
           Drop column:
@@ -217,6 +249,8 @@ export default function App() {
               setDropColumn(Math.max(0, Math.min(12, Number(e.target.value))))
             }
             style={{ width: 80, marginLeft: 8 }}
+            onFocus={onInputFocus}
+            onBlur={onInputBlur}
           />
         </label>
 
@@ -228,6 +262,8 @@ export default function App() {
             value={betCents}
             onChange={(e) => setBetCents(Number(e.target.value))}
             style={{ width: 100, marginLeft: 8 }}
+            onFocus={onInputFocus}
+            onBlur={onInputBlur}
           />
         </label>
 
@@ -238,19 +274,23 @@ export default function App() {
             onChange={(e) => setClientSeed(e.target.value)}
             placeholder="optional clientSeed"
             style={{ marginLeft: 8, minWidth: 200 }}
+            onFocus={onInputFocus}
+            onBlur={onInputBlur}
           />
         </label>
-        <button onClick={regenerateClientSeed}>🎲 Regenerate</button>
 
-        <button onClick={commitRound}>Commit (create round)</button>
-        <button onClick={startRound}>Drop (start)</button>
-        <button onClick={revealRound}>Reveal (serverSeed)</button>
+        <button onClick={regenerateClientSeed}>🎲 Regenerate</button>
+        <button onClick={() => void commitRef.current?.()}>Commit</button>
+        <button onClick={() => void startRef.current?.()}>Drop</button>
+        <button onClick={() => void revealRef.current?.()}>Reveal</button>
         <button onClick={openVerifier}>Verifier</button>
         <button
           onClick={() =>
-            setMuted((m) => {
+            setMutedState((m) => {
               const nm = !m;
-              localStorage.setItem("muted", nm ? "1" : "0");
+              try {
+                localStorage.setItem("muted", nm ? "1" : "0");
+              } catch {}
               return nm;
             })
           }
@@ -259,19 +299,46 @@ export default function App() {
         </button>
       </div>
 
-      <div style={{ marginBottom: 12, lineHeight: "1.6" }}>
-        <strong>Bin result:</strong> {bin ?? "---"} &nbsp; | &nbsp;
-        <strong>Round:</strong> {roundId ?? "none"}
-        <br />
-        <strong>Commit Hash:</strong>{" "}
-        <span style={{ color: "#00e6e6", wordBreak: "break-all" }}>
-          {commitHex ?? "—"}
-        </span>
-        <br />
-        <strong>Server Seed (revealed):</strong>{" "}
-        <span style={{ color: "#00e6e6", wordBreak: "break-all" }}>
-          {serverSeed ?? "— not revealed —"}
-        </span>
+      {/* Copyable seed display fields */}
+      <div className="round-info" style={{ marginBottom: 12 }}>
+        <div>
+          <strong>Bin result:</strong> {bin ?? "---"} &nbsp; | &nbsp;
+          <strong>Round:</strong> {roundId ?? "none"}
+        </div>
+
+        {[
+          { label: "Commit Hash", value: commitHex },
+          { label: "Server Seed (Revealed)", value: serverSeed },
+          { label: "Client Seed", value: clientSeed },
+        ].map(({ label, value }) => (
+          <div key={label} style={{ marginTop: 8 }}>
+            <strong>{label}:</strong>
+            <input
+              readOnly
+              value={value ?? "—"}
+              onFocus={(e) => {
+                e.currentTarget.select();
+                onInputFocus();
+              }}
+              onBlur={onInputBlur}
+              onClick={() => copyToClipboard(value, label)}
+              title="Click to copy"
+              style={{
+                display: "block",
+                width: "100%",
+                maxWidth: 700,
+                marginTop: 6,
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px solid #00f5ff",
+                backgroundColor: "#0a0a0a",
+                color: "#00e6e6",
+                fontFamily: "monospace",
+                cursor: value ? "copy" : "default",
+              }}
+            />
+          </div>
+        ))}
       </div>
 
       <Canvas
@@ -284,8 +351,8 @@ export default function App() {
 
       <div style={{ marginTop: 16 }}>
         <small>
-          Reduced motion: {String(reducedMotion)} &nbsp; | &nbsp; Tilt:{" "}
-          {String(tilt)} &nbsp; | &nbsp; Debug: {String(debug)}
+          Reduced motion: {String(reducedMotion)} | Tilt: {String(tilt)} |
+          Debug: {String(debug)}
         </small>
       </div>
     </div>
