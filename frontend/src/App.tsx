@@ -4,7 +4,7 @@ import Canvas from "./components/Canvas";
 import "./styles.css";
 
 const api = axios.create({
-  baseURL: "http://localhost:4000", // local dev
+  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:4000",
 });
 
 type PegMap = number[][];
