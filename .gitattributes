@@ -1,0 +1,12 @@
+# Enforce LF for source files
+*.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+
+# Keep binary files alone
+*.png binary
+*.jpg binary
+*.webp binary

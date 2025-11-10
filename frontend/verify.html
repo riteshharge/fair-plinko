@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Plinko — Verifier</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      /* Page-specific tweaks that complement styles.css */
+      .verifier-container {
+        backdrop-filter: blur(10px);
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        box-shadow: 0 0 25px rgba(255, 255, 255, 0.05);
+        padding: 20px;
+        max-width: 900px;
+        width: 90%;
+        margin: 30px auto;
+      }
+
+      label {
+        display: block;
+        margin: 8px 0;
+        font-weight: 500;
+      }
+
+      input {
+        width: 100%;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        color: #fff;
+        border-radius: 8px;
+        padding: 6px 10px;
+        margin-top: 4px;
+      }
+
+      #out {
+        background: rgba(0, 0, 0, 0.4);
+        color: #bffcff;
+        padding: 12px;
+        border-radius: 10px;
+        margin-top: 10px;
+        font-family: monospace;
+        white-space: pre-wrap;
+        box-shadow: inset 0 0 10px rgba(0, 245, 255, 0.25);
+      }
+
+      #path {
+        margin-top: 10px;
+        font-family: monospace;
+        color: #ffd700;
+      }
+
+      canvas {
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: radial-gradient(circle at center, #111, #050505);
+        display: block;
+        margin: 20px auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Plinko — Verifier</h1>
+
+    <div class="verifier-container">
+      <p>
+        Enter <code>serverSeed</code>, <code>clientSeed</code>,
+        <code>nonce</code> and <code>dropColumn</code> below. Click
+        <strong>Verify</strong> to call backend <code>/api/verify</code> and
+        visualize the drop path.
+      </p>
+
+      <label
+        >Server Seed:
+        <input id="serverSeed" placeholder="Enter server seed" />
+      </label>
+
+      <label
+        >Client Seed:
+        <input id="clientSeed" placeholder="Enter client seed" />
+      </label>
+
+      <label
+        >Nonce:
+        <input id="nonce" value="1" type="number" />
+      </label>
+
+      <label
+        >Drop Column:
+        <input id="dropColumn" value="6" type="number" />
+      </label>
+
+      <button id="btn">✅ Verify</button>
+
+      <pre id="out">Awaiting verification...</pre>
+      <div id="path"></div>
+      <canvas id="c" width="600" height="400"></canvas>
+    </div>
+
+    <script>
+      document.getElementById("btn").onclick = async function () {
+        const serverSeed = document.getElementById("serverSeed").value.trim();
+        const clientSeed = document.getElementById("clientSeed").value.trim();
+        const nonce = document.getElementById("nonce").value.trim();
+        const dropColumn = document.getElementById("dropColumn").value.trim();
+
+        const out = document.getElementById("out");
+        const pathDiv = document.getElementById("path");
+        out.textContent = "⏳ Verifying...";
+
+        const qs = new URLSearchParams({
+          serverSeed,
+          clientSeed,
+          nonce,
+          dropColumn,
+        });
+
+        try {
+          const res = await fetch("/api/verify?" + qs.toString());
+          const j = await res.json();
+          out.textContent = JSON.stringify(j, null, 2);
+
+          if (j.path) {
+            pathDiv.textContent = "🎯 Path: " + j.path.join("");
+            drawPath(j.path);
+          } else {
+            pathDiv.textContent = "";
+            clearCanvas();
+          }
+        } catch (e) {
+          out.textContent = "❌ Error: " + e;
+        }
+      };
+
+      function clearCanvas() {
+        const canvas = document.getElementById("c");
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      function drawPath(path) {
+        const canvas = document.getElementById("c");
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const startX = canvas.width / 2;
+        let x = startX;
+        const stepX = 20;
+        const stepY = 25;
+        let y = 30;
+
+        ctx.strokeStyle = "#00f5ff";
+        ctx.lineWidth = 2;
+
+        for (let i = 0; i < path.length; i++) {
+          ctx.beginPath();
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
+          ctx.fillStyle = "#ffcb00";
+          ctx.fill();
+
+          const newX = path[i] === "R" ? x + stepX : x - stepX;
+          const newY = y + stepY;
+
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(newX, newY);
+          ctx.stroke();
+
+          x = newX;
+          y = newY;
+        }
+
+        // final bin indicator
+        ctx.fillStyle = "#00ff88";
+        ctx.fillRect(50, y + 15, canvas.width - 100, 6);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Round" ALTER COLUMN "nonce" SET DATA TYPE BIGINT;

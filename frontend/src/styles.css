@@ -1,0 +1,24 @@
+:root {
+  --accent1: #00f5ff;
+  --accent2: #ff00f2;
+  --accent3: #ffcb00;
+}
+body {
+  font-family: Inter, system-ui, Arial;
+  background: linear-gradient(180deg, #0a0a0a, #121212);
+  color: #eee;
+  margin: 0;
+  padding: 20px;
+}
+button {
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  border: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  transition: 0.2s;
+}
+button:hover {
+  opacity: 0.85;
+}

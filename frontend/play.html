@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Plinko — Play</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <h1>Plinko — Play</h1>
+    <div id="controls" aria-label="game controls">
+      <div class="row">
+        <label
+          >Drop Column:
+          <input
+            id="dropColumn"
+            type="number"
+            min="0"
+            max="12"
+            value="6"
+            aria-label="drop column"
+        /></label>
+        <label
+          >Bet (cents):
+          <input
+            id="bet"
+            type="number"
+            min="0"
+            value="100"
+            aria-label="bet amount"
+        /></label>
+        <label
+          >Client Seed:
+          <input
+            id="clientSeed"
+            size="30"
+            value="player-seed"
+            aria-label="client seed"
+          />
+          <button id="regenSeedBtn" type="button">🎲 Regenerate</button>
+        </label>
+        <button id="commitBtn">Commit New Round</button>
+        <button id="startBtn" disabled>Start (Drop)</button>
+        <button id="revealBtn" disabled>Reveal</button>
+        <label><input id="mute" type="checkbox" /> Mute</label>
+        <label><input id="reduced" type="checkbox" /> Reduced Motion</label>
+      </div>
+      <div class="row" id="keyboardHelp" style="font-size: 14px; color: #555">
+        Keyboard: ← / → to change drop column, Space to start, T for TILT, G for
+        debug grid.
+      </div>
+      <div id="paytable" aria-live="polite">
+        <strong>Paytable:</strong>
+        <div id="paytableGrid"></div>
+      </div>
+      <div id="status" aria-live="polite">No round yet.</div>
+    </div>
+
+    <canvas
+      id="board"
+      width="900"
+      height="500"
+      role="img"
+      aria-label="plinko board"
+    ></canvas>
+    <canvas
+      id="confetti"
+      width="900"
+      height="500"
+      style="position: fixed; left: 0; top: 0; pointer-events: none"
+    ></canvas>
+
+    <script>
+      const api = "/api";
+      let currentRound = null;
+      let serverSeedLocal = null;
+      let tilt = 0;
+      let debugGrid = false;
+
+      const board = document.getElementById("board");
+      const ctx = board.getContext("2d");
+      const conf = document.getElementById("confetti");
+      const cctx = conf.getContext("2d");
+
+      function setStatus(s) {
+        document.getElementById("status").textContent = s;
+      }
+
+      function randomSeed() {
+        return "player-" + Math.random().toString(16).slice(2, 8);
+      }
+
+      // Manual regenerate button
+      document.getElementById("regenSeedBtn").onclick = () => {
+        document.getElementById("clientSeed").value = randomSeed();
+        setStatus(
+          "🔁 Client Seed regenerated: " +
+            document.getElementById("clientSeed").value
+        );
+      };
+
+      function drawPaytable() {
+        const container = document.getElementById("paytableGrid");
+        container.innerHTML = "";
+        for (let i = 0; i < 13; i++) {
+          const mult = (1 + Math.abs(6 - i) * 0.25).toFixed(2);
+          const div = document.createElement("div");
+          div.style.display = "inline-block";
+          div.style.width = "60px";
+          div.style.textAlign = "center";
+          div.style.padding = "6px";
+          div.style.margin = "2px";
+          div.style.border = "1px solid #eee";
+          div.innerHTML = `<strong>${i}</strong><br/>x${mult}`;
+          container.appendChild(div);
+        }
+      }
+      drawPaytable();
+
+      async function postJson(url, body) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return res.json();
+      }
+
+      // ✅ Generate and show Client Seed automatically after Commit
+      document.getElementById("commitBtn").onclick = async () => {
+        setStatus("Committing round...");
+        const j = await postJson(api + "/rounds/commit", {});
+        if (j.error) {
+          setStatus("Error: " + j.error);
+          return;
+        }
+        currentRound = {
+          id: j.roundId,
+          commitHex: j.commitHex,
+          nonce: j.nonce,
+        };
+
+        // Generate and display client seed
+        const csInput = document.getElementById("clientSeed");
+        const clientSeed = randomSeed();
+        csInput.value = clientSeed;
+
+        setStatus(
+          "✅ Round committed.\nCommit Hash: " +
+            j.commitHex +
+            "\nGenerated Client Seed: " +
+            clientSeed
+        );
+        document.getElementById("startBtn").disabled = false;
+        document.getElementById("revealBtn").disabled = true;
+        serverSeedLocal = null;
+      };
+
+      document.getElementById("startBtn").onclick = async () => {
+        if (!currentRound) return setStatus("No round. Commit first.");
+        const clientSeed = document.getElementById("clientSeed").value || "";
+        const bet = Number(document.getElementById("bet").value || 0);
+        const dropColumn = Number(
+          document.getElementById("dropColumn").value || 6
+        );
+        setStatus("Starting round...");
+        const j = await postJson(
+          api + "/rounds/" + currentRound.id + "/start",
+          { clientSeed, betCents: bet, dropColumn }
+        );
+        if (j.error) return setStatus("Error: " + j.error);
+        currentRound = { ...currentRound, ...j, clientSeed };
+        setStatus("Round started: binIndex=" + j.binIndex);
+        document.getElementById("revealBtn").disabled = false;
+        playPath(j.path, dropColumn);
+      };
+
+      document.getElementById("revealBtn").onclick = async () => {
+        if (!currentRound) return setStatus("No round to reveal");
+        setStatus("Revealing...");
+        const j = await postJson(
+          api + "/rounds/" + currentRound.id + "/reveal",
+          {}
+        );
+        if (j.error) return setStatus("Error: " + j.error);
+        currentRound.serverSeed = j.serverSeed;
+        setStatus("Revealed serverSeed. Verifyable.");
+      };
+
+      function drawPegs(rows = 12, cols = 13) {
+        ctx.clearRect(0, 0, board.width, board.height);
+        const startX = 60;
+        const endX = board.width - 60;
+        const gapX = (endX - startX) / (cols - 1);
+        const gapY = (board.height - 140) / rows;
+        ctx.save();
+        if (tilt !== 0) {
+          ctx.translate(board.width / 2, board.height / 2);
+          ctx.rotate((tilt * Math.PI) / 180);
+          ctx.translate(-board.width / 2, -board.height / 2);
+        }
+        for (let r = 0; r < rows; r++) {
+          const offset = r % 2 === 0 ? 0 : gapX / 2;
+          for (let c = 0; c < cols; c++) {
+            const x = startX + c * gapX + offset;
+            const y = 40 + r * gapY;
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = "#cfcfcf";
+            ctx.fill();
+            if (debugGrid) {
+              ctx.fillStyle = "black";
+              ctx.fillText(r + "," + c, x + 8, y + 4);
+            }
+          }
+        }
+        ctx.fillStyle = "#eee";
+        ctx.fillRect(50, board.height - 60, board.width - 100, 30);
+        ctx.restore();
+      }
+
+      function playPath(path, initialDrop) {
+        const reduced = document.getElementById("reduced").checked;
+        drawPegs();
+        const rows = 12,
+          cols = 13;
+        const startX = 60;
+        const endX = board.width - 60;
+        const gapX = (endX - startX) / (cols - 1);
+        const gapY = (board.height - 140) / rows;
+        let pos = Number(initialDrop || 6);
+        const steps = [];
+        let x = startX + pos * gapX;
+        let y = 20;
+        steps.push({ x, y });
+        for (let r = 0; r < path.length; r++) {
+          if (path[r] === "R") pos += 1;
+          x = startX + pos * gapX;
+          y += gapY;
+          steps.push({ x, y });
+        }
+        const mute = document.getElementById("mute").checked;
+        const ctxAudio = new (window.AudioContext ||
+          window.webkitAudioContext)();
+        function tick(freq) {
+          if (mute || reduced) return;
+          const o = ctxAudio.createOscillator();
+          const g = ctxAudio.createGain();
+          o.type = "sine";
+          o.frequency.value = freq;
+          o.connect(g);
+          g.connect(ctxAudio.destination);
+          g.gain.value = 0.05;
+          o.start();
+          o.stop(ctxAudio.currentTime + 0.06);
+        }
+
+        let idx = 0,
+          t = 0;
+        let sx = steps[0].x,
+          sy = steps[0].y;
+        function frame() {
+          drawPegs();
+          const nx = steps[Math.min(idx + 1, steps.length - 1)].x;
+          const ny = steps[Math.min(idx + 1, steps.length - 1)].y;
+          const ix = sx + (nx - sx) * t;
+          const iy = sy + (ny - sy) * t;
+          ctx.beginPath();
+          ctx.arc(ix, iy, 10, 0, Math.PI * 2);
+          ctx.fillStyle = "orange";
+          ctx.fill();
+          if (t === 0) tick(800);
+          t += 0.08;
+          if (t >= 1) {
+            tick(600 + Math.random() * 200);
+            t = 0;
+            idx++;
+            sx = nx;
+            sy = ny;
+          }
+          if (idx < steps.length - 1) {
+            requestAnimationFrame(frame);
+          } else {
+            launchConfetti();
+            setTimeout(() => {
+              drawPegs();
+              ctx.fillStyle = "rgba(255,215,0,0.6)";
+              ctx.fillRect(50, board.height - 70, board.width - 100, 40);
+            }, 50);
+          }
+        }
+        if (reduced) {
+          const last = steps[steps.length - 1];
+          drawPegs();
+          ctx.beginPath();
+          ctx.arc(last.x, last.y, 12, 0, Math.PI * 2);
+          ctx.fillStyle = "orange";
+          ctx.fill();
+          launchConfetti();
+        } else {
+          frame();
+        }
+      }
+
+      function launchConfetti() {
+        const w = (conf.width = board.width),
+          h = (conf.height = board.height);
+        const pieces = [];
+        for (let i = 0; i < 60; i++) {
+          pieces.push({
+            x: Math.random() * w,
+            y: -10 - Math.random() * h,
+            vx: (Math.random() - 0.5) * 5,
+            vy: Math.random() * 3 + 2,
+            r: Math.random() * 6 + 3,
+            c: ["#f94144", "#f3722c", "#f9c74f", "#90be6d", "#577590"][
+              Math.floor(Math.random() * 5)
+            ],
+          });
+        }
+        let tt = 0;
+        function loop() {
+          cctx.clearRect(0, 0, w, h);
+          for (const p of pieces) {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.08;
+            cctx.fillStyle = p.c;
+            cctx.fillRect(p.x, p.y, p.r, p.r * 0.6);
+          }
+          tt++;
+          if (tt < 180) requestAnimationFrame(loop);
+          else cctx.clearRect(0, 0, w, h);
+        }
+        loop();
+      }
+
+      window.addEventListener("keydown", (e) => {
+        const dc = document.getElementById("dropColumn");
+        if (e.key === "ArrowLeft") {
+          dc.value = Math.max(0, Number(dc.value) - 1);
+        }
+        if (e.key === "ArrowRight") {
+          dc.value = Math.min(12, Number(dc.value) + 1);
+        }
+        if (e.code === "Space") {
+          e.preventDefault();
+          document.getElementById("startBtn").click();
+        }
+        if (e.key.toLowerCase() === "t") {
+          tilt = tilt === 0 ? 5 : 0;
+          drawPegs();
+        }
+        if (e.key.toLowerCase() === "g") {
+          debugGrid = !debugGrid;
+          drawPegs();
+        }
+      });
+
+      if (
+        window.matchMedia &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        document.getElementById("reduced").checked = true;
+      }
+      drawPegs();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,48 @@
+# === Root Git Ignore ===
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+secrets.json
+*.pem
+*.key
+*.crt
+
+# Prisma artifacts
+/prisma/dev.db
+/prisma/client/
+node_modules/.prisma/
+
+# Build artifacts
+dist/
+build/
+
+# Logs
+*.log
+logs/
+pids/
+*.pid
+tmp/
+temp/
+
+# Editors & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Frontend build outputs
+frontend/dist/
+frontend/build/
+
+# Backend runtime outputs
+backend/secrets.json
+backend/node_modules/
+backend/prisma/client/
