@@ -15,7 +15,7 @@ import "./styles.css";
  */
 
 const api = axios.create({
-  baseURL: "http://localhost:4000",
+  baseURL: "https://fair-plinko.onrender.com",
 });
 
 type PegMap = number[][];
