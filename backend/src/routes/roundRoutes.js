@@ -59,7 +59,7 @@ function simulatePlinko(
 }
 
 /**
- * ✅ POST /api/rounds/commit
+ *  POST /api/rounds/commit
  * Creates a new round with a serverSeed hash
  */
 router.post("/commit", async (req, res) => {
@@ -85,7 +85,7 @@ router.post("/commit", async (req, res) => {
 });
 
 /**
- * ✅ POST /api/rounds/:id/start
+ *  POST /api/rounds/:id/start
  * Takes clientSeed and runs deterministic simulation
  */
 router.post("/:id/start", async (req, res) => {
@@ -133,7 +133,7 @@ router.post("/:id/start", async (req, res) => {
 });
 
 /**
- * ✅ POST /api/rounds/:id/reveal
+ *  POST /api/rounds/:id/reveal
  * Reveals serverSeed and final fairness verification
  */
 router.post("/:id/reveal", async (req, res) => {
@@ -163,7 +163,7 @@ router.post("/:id/reveal", async (req, res) => {
 });
 
 /**
- * ✅ GET /api/verify
+ *  GET /api/verify
  * External verifier (recompute fairness)
  */
 router.get("/verify", async (req, res) => {

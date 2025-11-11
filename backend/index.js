@@ -17,17 +17,41 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 const prisma = new PrismaClient();
 const app = express();
-app.use(cors());
+
+// ✅ Configure CORS for local + deployed frontend
+const allowedOrigins = [
+  "http://localhost:5173", // local dev
+  "https://fair-plinko-lab.onrender.com", // deployed frontend
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn("❌ Blocked by CORS:", origin);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
+
 app.use(express.json());
+
+// ✅ Import round routes (if needed for extra endpoints)
 import roundRoutes from "./src/routes/roundRoutes.js";
 app.use("/api/rounds", roundRoutes);
 
-// ✅ Helper
+// ✅ Helper: SHA256
 function sha256Hex(s) {
   return crypto.createHash("sha256").update(String(s), "utf8").digest("hex");
 }
 
-// ✅ Helper to safely read secrets.json
+// ✅ Read secrets.json safely
 async function loadSecrets() {
   const secretsPath = path.join(__dirname, "secrets.json");
   try {
@@ -38,7 +62,7 @@ async function loadSecrets() {
   }
 }
 
-// ✅ Helper to write secrets.json
+// ✅ Write secrets.json safely
 async function saveSecret(roundId, serverSeed) {
   const secretsPath = path.join(__dirname, "secrets.json");
   const map = await loadSecrets();
@@ -46,16 +70,16 @@ async function saveSecret(roundId, serverSeed) {
   await fs.writeFile(secretsPath, JSON.stringify(map, null, 2), "utf8");
 }
 
-// ✅ /api/rounds/commit
+// ✅ /api/rounds/commit — Create a new commit (server seed hash)
 app.post("/api/rounds/commit", async (req, res) => {
   try {
     const serverSeed = crypto.randomBytes(32).toString("hex");
-    const nonce = Date.now().toString();
+    const nonce = 0; // start from 0 for each new commit
     const commitHex = sha256Hex(`${serverSeed}:${nonce}`);
 
     const round = await prisma.round.create({
       data: {
-        nonce: Number(nonce) || 0,
+        nonce,
         commitHex,
         serverSeed: null,
         clientSeed: "",
@@ -79,7 +103,7 @@ app.post("/api/rounds/commit", async (req, res) => {
   }
 });
 
-// ✅ /api/rounds/:id/start
+// ✅ /api/rounds/:id/start — Simulate a Plinko drop
 app.post("/api/rounds/:id/start", async (req, res) => {
   try {
     let { id } = req.params;
@@ -91,11 +115,11 @@ app.post("/api/rounds/:id/start", async (req, res) => {
     if (!round || round.status !== "CREATED") {
       console.log("ℹ️ Auto-creating new round (invalid or used round ID)");
       const serverSeed = crypto.randomBytes(32).toString("hex");
-      const nonce = Date.now().toString();
+      const nonce = 0;
       const commitHex = sha256Hex(`${serverSeed}:${nonce}`);
       round = await prisma.round.create({
         data: {
-          nonce: Number(nonce) || 0,
+          nonce,
           commitHex,
           serverSeed: null,
           clientSeed: "",
@@ -114,7 +138,7 @@ app.post("/api/rounds/:id/start", async (req, res) => {
       await saveSecret(round.id, serverSeed);
     }
 
-    // ✅ Fetch serverSeed from secrets file
+    // ✅ Load the hidden server seed
     const secrets = await loadSecrets();
     const serverSeed = secrets[id];
     if (!serverSeed)
@@ -122,13 +146,16 @@ app.post("/api/rounds/:id/start", async (req, res) => {
         .status(500)
         .json({ error: "serverSeed missing (dev secrets)" });
 
-    // Combine seeds + generate deterministic path
+    // ✅ Deterministic combined seed
     const combinedSeed = sha256Hex(
       `${serverSeed}:${clientSeed}:${round.nonce}`
     );
+
+    // ✅ Generate Plinko path from Engine
     const engine = new Engine(combinedSeed, Number(dropColumn));
     engine.generate();
 
+    // ✅ Save round data
     const updated = await prisma.round.update({
       where: { id },
       data: {
@@ -145,11 +172,21 @@ app.post("/api/rounds/:id/start", async (req, res) => {
       },
     });
 
+    // ✅ Increment nonce automatically after each drop (for unique results)
+    await prisma.round.update({
+      where: { id },
+      data: {
+        nonce: round.nonce + 1,
+      },
+    });
+
+    // ✅ Respond to frontend
     res.json({
       roundId: updated.id,
       pegMapHash: engine.pegMapHash,
       binIndex: engine.binIndex,
       path: engine.path,
+      nonce: round.nonce + 1,
     });
   } catch (err) {
     console.error("❌ Start round error:", err);
@@ -157,7 +194,7 @@ app.post("/api/rounds/:id/start", async (req, res) => {
   }
 });
 
-// ✅ /api/rounds/:id/reveal
+// ✅ /api/rounds/:id/reveal — Reveal the hidden server seed
 app.post("/api/rounds/:id/reveal", async (req, res) => {
   try {
     const { id } = req.params;
@@ -173,6 +210,7 @@ app.post("/api/rounds/:id/reveal", async (req, res) => {
       where: { id },
       data: { serverSeed, status: "REVEALED", revealedAt: new Date() },
     });
+
     res.json({ roundId: updated.id, serverSeed });
   } catch (err) {
     console.error("❌ Reveal error:", err);
@@ -180,12 +218,13 @@ app.post("/api/rounds/:id/reveal", async (req, res) => {
   }
 });
 
-// ✅ /api/rounds/:id
+// ✅ /api/rounds/:id — Fetch a single round
 app.get("/api/rounds/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const round = await prisma.round.findUnique({ where: { id } });
     if (!round) return res.status(404).json({ error: "Round not found" });
+
     const out = { ...round };
     if (!round.serverSeed) out.serverSeed = null;
     res.json(out);
@@ -214,10 +253,10 @@ app.get("/api/rounds", async (req, res) => {
   }
 });
 
-// ✅ Verification endpoint
+// ✅ /api/verify — Fairness verification endpoint
 app.get("/api/verify", verifyRound);
 
-// ✅ Health check
+// ✅ /api/health — Health check
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 // ✅ Start server

@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
+import confetti from "canvas-confetti";
 import Canvas from "./components/Canvas";
 import VerifierModal from "./components/VerifierModal";
 import "./styles.css";
 
-// ✅ Uses .env for API base URL (Vite style)
+// ✅ API base URL setup
 const api = axios.create({
   baseURL:
     (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:4000",
@@ -56,7 +57,7 @@ export default function App() {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
-      alert(`${label} copied to clipboard ✅`);
+      alert(`${label} copied ✅`);
     } catch {
       const ta = document.createElement("textarea");
       ta.value = text;
@@ -90,7 +91,7 @@ export default function App() {
     }
   }, []);
 
-  // ✅ Start round
+  // ✅ Start round — now updates nonce live
   const startRound = useCallback(async () => {
     if (!roundId) {
       alert("Please create a round (commit) first.");
@@ -106,14 +107,18 @@ export default function App() {
       setPath(res.data.path || []);
       setBin(res.data.binIndex ?? null);
 
+      // ✅ update nonce to reflect backend increment
+      if (res.data.nonce !== undefined) {
+        setNonce(String(res.data.nonce));
+        localStorage.setItem("nonce", String(res.data.nonce));
+      }
+
       setTimeout(() => setAnimateNow(true), 40);
 
       if (!muted) {
-        try {
-          const s = new Audio("/assets/land.wav");
-          s.volume = 0.3;
-          s.play().catch(() => {});
-        } catch {}
+        const s = new Audio("/assets/land.wav");
+        s.volume = 0.3;
+        s.play().catch(() => {});
       }
     } catch (err: any) {
       alert(
@@ -123,7 +128,7 @@ export default function App() {
     }
   }, [roundId, clientSeed, betCents, dropColumn, muted]);
 
-  // ✅ Reveal round
+  // ✅ Reveal round (auto-save to localStorage for Verify)
   const revealRound = useCallback(async () => {
     if (!roundId) {
       alert("No roundId found");
@@ -132,13 +137,19 @@ export default function App() {
     try {
       const res = await api.post(`/api/rounds/${roundId}/reveal`, {});
       setServerSeed(res.data.serverSeed || null);
-      alert("✅ Round revealed!");
+
+      // ✅ Save for auto-verify
+      localStorage.setItem("serverSeed", res.data.serverSeed || "");
+      localStorage.setItem("clientSeed", clientSeed || "");
+      localStorage.setItem("nonce", nonce || "");
+
+      alert("✅ Round revealed and seeds saved!");
     } catch (err: any) {
       alert(
         "❌ Reveal failed: " + (err?.response?.data?.error || err?.message)
       );
     }
-  }, [roundId]);
+  }, [roundId, clientSeed, nonce]);
 
   // ✅ Verifier modal submission
   const handleVerifySubmit = async (vals: {
@@ -163,7 +174,14 @@ export default function App() {
       setPegMap(res.data.pegMap || []);
       setPath(res.data.path || []);
       setBin(res.data.binIndex ?? null);
-      setTimeout(() => setAnimateNow(true), 40);
+
+      // 🎉 Confetti celebration
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.7 },
+        colors: ["#00f5ff", "#ff00f2", "#ffcb00"],
+      });
     } catch (err: any) {
       alert(
         "❌ Verifier failed: " + (err.response?.data?.error || err.message)
@@ -172,23 +190,24 @@ export default function App() {
     setVerifierOpen(false);
   };
 
-  // ✅ Hooks
+  // ✅ Hook setup
   useEffect(() => {
     startRef.current = startRound;
     commitRef.current = commitRound;
     revealRef.current = revealRound;
   }, [startRound, commitRound, revealRound]);
 
-  // ✅ Keyboard shortcuts
+  // ✅ Keyboard controls
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (inputFocusRef.current) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       if (key === "arrowleft") {
-        setDropColumn((d) => Math.max(0, d - 1));
+        e.preventDefault();
+        setDropColumn((prev) => Math.max(0, prev - 1));
       } else if (key === "arrowright") {
-        setDropColumn((d) => Math.min(12, d + 1));
-      } else if (key === " " || e.code === "Space") {
+        e.preventDefault();
+        setDropColumn((prev) => Math.min(12, prev + 1));
+      } else if (key === " " || e.code === "space") {
         e.preventDefault();
         void startRef.current?.();
       } else if (key === "m") {
@@ -199,20 +218,18 @@ export default function App() {
         });
       } else if (key === "t") setTilt((t) => !t);
       else if (key === "g") setDebug((d) => !d);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // ✅ Helpers
-  const onInputFocus = () => (inputFocusRef.current = true);
-  const onInputBlur = () => (inputFocusRef.current = false);
   const regenerateClientSeed = () =>
     setClientSeed("player-" + Math.random().toString(16).slice(2, 8));
 
   return (
     <div style={{ padding: 20 }}>
-      <h2>🎮 Plinko (Demo) — ← → Space(drop), M mute, T tilt, G debug</h2>
+      <h2>Plinko — ← → move, Space drop, M mute, T tilt, G debug</h2>
 
       {/* Controls */}
       <div
@@ -235,8 +252,6 @@ export default function App() {
               setDropColumn(Math.max(0, Math.min(12, Number(e.target.value))))
             }
             style={{ width: 80, marginLeft: 8 }}
-            onFocus={onInputFocus}
-            onBlur={onInputBlur}
           />
         </label>
 
@@ -248,8 +263,6 @@ export default function App() {
             value={betCents}
             onChange={(e) => setBetCents(Number(e.target.value))}
             style={{ width: 100, marginLeft: 8 }}
-            onFocus={onInputFocus}
-            onBlur={onInputBlur}
           />
         </label>
 
@@ -259,8 +272,6 @@ export default function App() {
             value={clientSeed}
             onChange={(e) => setClientSeed(e.target.value)}
             style={{ marginLeft: 8, minWidth: 200 }}
-            onFocus={onInputFocus}
-            onBlur={onInputBlur}
           />
         </label>
 
@@ -270,15 +281,15 @@ export default function App() {
         <button onClick={() => void revealRef.current?.()}>Reveal</button>
         <button onClick={() => setVerifierOpen(true)}>Modal Verify</button>
 
-        {/* ✅ New Verify Page Link */}
+        {/* Verify Page Link */}
         <Link to="/verify">
           <button style={{ background: "#00f5ff", color: "#000" }}>
-            🌐 Go to Verify Page
+            Verify Page
           </button>
         </Link>
       </div>
 
-      {/* Info */}
+      {/* Info Section */}
       <div
         className="round-info"
         style={{
@@ -334,8 +345,10 @@ export default function App() {
             borderRadius: 8,
           }}
         >
-          💡 Note: Click <strong>Reveal</strong> to get your Server Seed, then
-          verify using Client Seed and Nonce manually or via the Verify page.
+          💡 <strong>Note:</strong> First click <strong>Reveal</strong> to
+          generate your Server Seed. Then your Server Seed, Client Seed, and
+          Nonce are automatically saved and pre-filled on the Verify Page —
+          editable anytime.
         </p>
       </div>
 

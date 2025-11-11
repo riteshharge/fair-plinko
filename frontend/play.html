@@ -126,7 +126,7 @@
         return res.json();
       }
 
-      // ✅ Generate and show Client Seed automatically after Commit
+      //  Generate and show Client Seed automatically after Commit
       document.getElementById("commitBtn").onclick = async () => {
         setStatus("Committing round...");
         const j = await postJson(api + "/rounds/commit", {});
@@ -146,7 +146,7 @@
         csInput.value = clientSeed;
 
         setStatus(
-          "✅ Round committed.\nCommit Hash: " +
+          " Round committed.\nCommit Hash: " +
             j.commitHex +
             "\nGenerated Client Seed: " +
             clientSeed

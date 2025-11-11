@@ -115,7 +115,7 @@ Each step uses PRNG bits (0 = left, 1 = right).
 
 The final bin index decides payout multiplier.
 
-✅ 4. Reveal Phase
+4.  Reveal Phase
 
 Once complete, backend reveals the original serverSeed.
 

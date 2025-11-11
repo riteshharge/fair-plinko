@@ -24,7 +24,7 @@ async function main() {
       revealedAt: new Date(),
     },
   });
-  console.log("✅ Inserted reference round for verification.");
+  console.log(" Inserted reference round for verification.");
 }
 
 main()

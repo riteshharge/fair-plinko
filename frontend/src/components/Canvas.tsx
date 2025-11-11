@@ -1,3 +1,4 @@
+// frontend/src/components/Canvas.tsx
 import React, { useEffect, useRef } from "react";
 import confetti from "canvas-confetti";
 
@@ -26,6 +27,14 @@ export default function Canvas({
   reducedMotion,
 }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const tickRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // preload tick sound once
+    tickRef.current = new Audio("/assets/tick.wav");
+    if (tickRef.current) tickRef.current.volume = 0.26;
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -33,41 +42,53 @@ export default function Canvas({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // sizing
     const W = (canvas.width = 900);
     const H = (canvas.height = 500);
+
+    // layout
     const rows = pegMap.length || 12;
     const startX = 60;
     const endX = W - 60;
     const gapX = (endX - startX) / (13 - 1);
     const gapY = (H - 140) / (rows || 12);
 
-    const tick = new Audio("/assets/tick.wav");
-    tick.volume = 0.3;
-
-    const playTick = () => {
-      try {
-        tick.currentTime = 0;
-        tick.play();
-      } catch {}
-    };
-
-    const drawFrame = (ballY: number, ballX: number) => {
+    // helper to draw full scene with given ball coords
+    const drawScene = (ballX: number, ballY: number) => {
       ctx.clearRect(0, 0, W, H);
 
-      // tilt
+      // tilt transform
       ctx.save();
       if (tilt) {
         ctx.translate(W / 2, H / 2);
-        ctx.rotate((3 * Math.PI) / 180);
+        ctx.rotate((3 * Math.PI) / 180); // ~3 degrees
         ctx.translate(-W / 2, -H / 2);
       }
 
       // background
       const bgGrad = ctx.createLinearGradient(0, 0, W, H);
-      bgGrad.addColorStop(0, "rgba(0,245,255,0.08)");
-      bgGrad.addColorStop(1, "rgba(255,0,242,0.08)");
+      bgGrad.addColorStop(0, "rgba(0,245,255,0.06)");
+      bgGrad.addColorStop(1, "rgba(255,0,242,0.06)");
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
+
+      // debug grid
+      if (debug) {
+        ctx.strokeStyle = "rgba(255,255,255,0.06)";
+        ctx.lineWidth = 0.5;
+        for (let x = 0; x < W; x += 40) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, H);
+          ctx.stroke();
+        }
+        for (let y = 0; y < H; y += 40) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(W, y);
+          ctx.stroke();
+        }
+      }
 
       // pegs
       for (let r = 0; r < rows; r++) {
@@ -82,13 +103,20 @@ export default function Canvas({
           ctx.shadowBlur = 8;
           ctx.fill();
           ctx.shadowBlur = 0;
+
+          if (debug) {
+            ctx.fillStyle = "#bbb";
+            ctx.font = "10px monospace";
+            ctx.fillText(`${r},${c}`, x + 8, y + 3);
+          }
         }
       }
 
       // bins
-      ctx.fillStyle = "rgba(255,255,255,0.1)";
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
       ctx.fillRect(50, H - 60, W - 100, 30);
       ctx.strokeStyle = "#00f5ff";
+      ctx.lineWidth = 1;
       for (let i = 0; i <= 13; i++) {
         const x = 50 + (i * (W - 100)) / 13;
         ctx.beginPath();
@@ -105,60 +133,131 @@ export default function Canvas({
       ctx.shadowBlur = 20;
       ctx.fill();
 
+      // ring for motion (if not reduced)
+      if (!reducedMotion) {
+        ctx.beginPath();
+        ctx.arc(ballX, ballY, 18, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,203,0,0.35)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
       ctx.restore();
     };
 
-    let frame = 0;
-    let anim: number;
-
-    const totalFrames = 120;
+    // Compute discrete step targets (one per path entry).
+    // We'll treat path entries as "R" meaning move one column to the right;
+    // other values keep current column. This makes final column = dropColumn + count(R).
+    const steps: { x: number; y: number }[] = [];
+    let currentCol = dropColumn;
     const startY = 40;
-    const endY = 40 + rows * gapY;
-    const xStart = startX + dropColumn * gapX;
-    const directionPath = path;
+    const rowYs: number[] = [];
+    for (let r = 0; r <= rows; r++) {
+      rowYs.push(40 + r * gapY);
+    }
 
-    if (animate && directionPath.length > 0) {
-      let posX = xStart;
-      let step = 0;
-      const stepY = (endY - startY) / directionPath.length;
+    // initial position (before any peg)
+    steps.push({ x: startX + currentCol * gapX, y: rowYs[0] });
 
-      const animateBall = () => {
-        const progress = frame / totalFrames;
-        const targetY = startY + progress * (endY - startY);
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i];
+      // according to backend earlier, 'R' increments count; handle only 'R' as +1
+      if (p === "R") {
+        currentCol = currentCol + 1;
+      } else if (p === "L") {
+        // optional: if backend ever sends 'L', we keep this for completeness
+        currentCol = Math.max(0, currentCol - 1);
+      } else {
+        // any other token -> do nothing (stay in same column)
+      }
+      const targetRow = Math.min(i + 1, rowYs.length - 1);
+      steps.push({ x: startX + currentCol * gapX, y: rowYs[targetRow] });
+    }
 
-        // simulate pegs along the way
-        if (
-          frame % Math.floor(totalFrames / directionPath.length) === 0 &&
-          step < directionPath.length
-        ) {
-          if (directionPath[step] === "R") posX += gapX / 2;
-          else posX -= gapX / 2;
-          if (!reducedMotion) playTick();
-          step++;
+    // final step ensure we have bottom position (bin row)
+    const finalRowY = rowYs[rowYs.length - 1];
+    const finalX = startX + currentCol * gapX;
+    if (steps.length === 0 || steps[steps.length - 1].y !== finalRowY) {
+      steps.push({ x: finalX, y: finalRowY });
+    }
+
+    // If not animating, draw final immediately
+    if (!animate || path.length === 0) {
+      drawScene(finalX, finalRowY);
+      // no animation, nothing else
+      return;
+    }
+
+    // Animation: step-by-step interpolation between consecutive step targets.
+    // time-based (ms) for smoothness and consistent timing regardless of framerate.
+    const stepDuration = reducedMotion ? 30 : 140; // ms per step (tweak for speed)
+    let stepIndex = 0;
+    let startTime: number | null = null;
+    let from = { x: steps[0].x, y: steps[0].y };
+    let to = steps.length > 1 ? steps[1] : steps[0];
+
+    const playTick = () => {
+      try {
+        if (tickRef.current && !reducedMotion) {
+          tickRef.current.currentTime = 0;
+          tickRef.current.play().catch(() => {});
         }
+      } catch {}
+    };
 
-        drawFrame(targetY, posX);
-        frame++;
+    const animateFrame = (ts: number) => {
+      if (startTime === null) startTime = ts;
+      const elapsed = ts - startTime;
+      const pct = Math.min(1, elapsed / stepDuration);
+      // ease-in-out for nicer motion
+      const eased = pct < 0.5 ? 2 * pct * pct : -1 + (4 - 2 * pct) * pct;
 
-        if (frame <= totalFrames) {
-          anim = requestAnimationFrame(animateBall);
-        } else {
-          cancelAnimationFrame(anim);
-          onAnimationComplete();
+      const ballX = from.x + (to.x - from.x) * eased;
+      const ballY = from.y + (to.y - from.y) * eased;
+      drawScene(ballX, ballY);
+
+      if (pct < 1) {
+        rafRef.current = requestAnimationFrame(animateFrame);
+        return;
+      }
+
+      // step finished
+      stepIndex++;
+      // play tick at the moment of landing on a peg (for every step except the initial)
+      playTick();
+
+      if (stepIndex >= steps.length - 1) {
+        // reached final target
+        drawScene(finalX, finalRowY);
+        // celebration
+        if (!reducedMotion) {
           confetti({
-            particleCount: 100,
-            spread: 80,
+            particleCount: 80,
+            spread: 70,
             origin: { y: 0.7 },
             colors: ["#00f5ff", "#ff00f2", "#ffcb00"],
           });
         }
-      };
+        onAnimationComplete();
+        return;
+      }
 
-      animateBall();
-    } else {
-      const finalX = startX + dropColumn * gapX;
-      drawFrame(endY, finalX);
-    }
+      // prepare next step
+      from = { x: to.x, y: to.y };
+      to = steps[stepIndex + 1];
+      startTime = null;
+      rafRef.current = requestAnimationFrame(animateFrame);
+    };
+
+    // start animation
+    rafRef.current = requestAnimationFrame(animateFrame);
+
+    // cleanup when deps change/unmount
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+    // deps: animate or inputs changing should restart
   }, [
     pegMap,
     path,
@@ -167,6 +266,7 @@ export default function Canvas({
     tilt,
     reducedMotion,
     onAnimationComplete,
+    debug,
   ]);
 
   return (
@@ -178,7 +278,7 @@ export default function Canvas({
         borderRadius: 12,
         margin: "10px auto",
         display: "block",
-        boxShadow: "0 0 25px rgba(0,245,255,0.2)",
+        boxShadow: "0 0 25px rgba(0,245,255,0.18)",
       }}
     />
   );
