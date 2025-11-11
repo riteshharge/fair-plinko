@@ -10,18 +10,18 @@ datasource db {
 model Round {
   id               String    @id @default(cuid())
   createdAt        DateTime  @default(now())
-  status           String    @default("CREATED")   // ✅ default value
-  nonce            BigInt
+  status           String    @default("committed")  //  matches roundRoutes.js commit step
+  nonce            String                                 // changed from BigInt → String
   commitHex        String
   serverSeed       String?
   clientSeed       String?
   combinedSeed     String?
   pegMapHash       String?
-  rows             Int?
-  dropColumn       Int?
+  rows             Int?      @default(12)                  //  default number of rows
+  dropColumn       Int?      @default(6)                   //  default drop column
   binIndex         Int?
   payoutMultiplier Float?
-  betCents         Int?
+  betCents         Int?      @default(100)
   pathJson         Json?
   revealedAt       DateTime?
 

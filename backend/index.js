@@ -19,6 +19,8 @@ const prisma = new PrismaClient();
 const app = express();
 app.use(cors());
 app.use(express.json());
+import roundRoutes from "./src/routes/roundRoutes.js";
+app.use("/api/rounds", roundRoutes);
 
 // ✅ Helper
 function sha256Hex(s) {
