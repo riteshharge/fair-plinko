@@ -163,16 +163,6 @@ Deploy backend (Render) and frontend (Vercel) for production.
 
 Add mobile-responsive layout and localization support.
 
-🔗 Links
-Feature URL
-🎮 Live App https://plinko-demo.vercel.app
-
-🔍 Verifier Page https://plinko-demo.vercel.app/verify
-
-🧾 Example Round https://plinko-demo.vercel.app/verify?serverSeed=c4c3f8b0e9abc123&clientSeed=player-f13d12&nonce=1731358216000&dropColumn=6
-
-(Replace above with your deployed URLs before submission.)
-
 🧠 Summary
 
 This project demonstrates:
