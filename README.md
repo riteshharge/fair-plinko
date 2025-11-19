@@ -1,180 +1,110 @@
 # 🎮 Plinko – Fairness-Verified Game (Full-Stack Project)
+A provably fair Plinko game built using React + TypeScript, Node.js (Express), and Prisma + PostgreSQL. It uses a cryptographic HMAC-SHA256 commit–reveal system so every round is independently verifiable. Verification is available in-app via a Verifier Modal and on a standalone /verify page. This entire document is provided as one continuous copy-paste block.
 
-A provably fair **Plinko** game built with **React + TypeScript**, **Node.js (Express)**, and **Prisma + PostgreSQL**.  
-The system ensures transparency by revealing seeds and allowing independent verification of every round.  
-It includes both an in-app **Verifier Modal** and a standalone **/verify page**.
-
----
-
-## 🚀 How to Run Locally
-
-### 1️⃣ Clone the repository
-
-```bash
+## 🚀 Run the Project Locally
+Clone the repository:
 git clone https://github.com/<your-username>/plinko_prisma_project_all_features.git
 cd plinko_prisma_project_all_features
-```
 
-2️⃣ Setup the backend
+Backend setup:
 cd backend
 npm install
 
-Create a .env file inside /backend:
-
+Create backend/.env:
 PORT=4000
 DATABASE_URL="postgresql://postgres:admin@localhost:5432/plinko"
 
-Run Prisma setup:
-
+Run Prisma and start backend:
 npx prisma migrate dev
 npx prisma generate
 npm run dev
+Backend URL: http://localhost:4000
 
-Backend will run on → http://localhost:4000
-
-3️⃣ Setup the frontend
+Frontend setup:
 cd ../frontend
 npm install
 
-Create a .env file inside /frontend:
-
+Create frontend/.env:
 VITE_API_BASE_URL=http://localhost:4000
 
-Then start it:
-
+Start frontend:
 npm run dev
+Frontend URL: http://localhost:5173
 
-Frontend will run on → http://localhost:5173
+## ⚙️ Architecture Overview (With Full System Diagram)
+Tech Stack:
+Frontend → React, TypeScript, Vite, TailwindCSS  
+Backend → Node.js, Express, Prisma ORM  
+Database → PostgreSQL  
+Animations → HTML5 Canvas, Framer Motion, canvas-confetti  
+Routing → React Router DOM  
+Fairness Engine → HMAC-SHA256 Commit–Reveal
 
-⚙️ Architecture Overview
-
-Tech Stack
-
-Frontend: React + TypeScript + Vite + TailwindCSS
-
-Backend: Node.js + Express + Prisma ORM
-
-Database: PostgreSQL
-
-Animations: HTML5 Canvas, canvas-confetti, Framer Motion
-
-Routing: React Router DOM
-
-Fairness Engine: HMAC-SHA256 Commit-Reveal system
-
+System Diagram:
 ┌──────────────────────────┐
-│ FRONTEND │
+│         FRONTEND         │
 │ React / TypeScript / Vite│
-│ ├─ Canvas.tsx (Plinko) │
-│ ├─ App.tsx (Main Game) │
-│ ├─ VerifyPage.tsx │
-│ └─ VerifierModal.tsx │
+│ ├─ Canvas.tsx (Plinko)   │
+│ ├─ App.tsx (Main Game)   │
+│ ├─ VerifyPage.tsx        │
+│ └─ VerifierModal.tsx     │
 └──────────┬───────────────┘
-│ REST API (Axios)
+           │ REST API (Axios)
 ┌──────────▼───────────────┐
-│ BACKEND │
-│ Express + Prisma + HMAC │
-│ ├─ /api/rounds │
-│ ├─ /api/verify │
-│ └─ Seed Generator │
+│         BACKEND          │
+│ Express + Prisma + HMAC  │
+│ ├─ /api/rounds           │
+│ ├─ /api/verify           │
+│ └─ Seed Generator        │
 └──────────┬───────────────┘
-│
-PostgreSQL DB
-│
-Prisma ORM Models
+           │
+        PostgreSQL DB
+           │
+        Prisma Models
 
-🔒 Fairness Specification
-
-Each round uses a Commit-Reveal mechanism for provable fairness.
-
-🧮 1. Commit Phase
-
-Backend generates random Server Seed (256-bit).
-
-Stores its hash:
-
+## 🔒 Fairness System (Commit–Reveal)
+1. Commit Phase  
+Backend generates a 256-bit serverSeed and exposes only:  
 commitHex = SHA256(serverSeed)
 
-This commit is sent to the frontend before play so it can’t be changed later.
-
-🎲 2. Start Phase
-
-The player provides a Client Seed.
-
-Backend computes:
-
+2. Start Phase  
+User provides clientSeed. Backend creates deterministic PRNG seed:  
 combinedSeed = HMAC_SHA256(serverSeed, clientSeed + nonce)
 
-This initializes a deterministic PRNG that controls left/right bounces.
+3. Pegboard Logic  
+13-column triangular peg layout. Each PRNG bit decides movement:  
+0 → left  
+1 → right  
+Final bin determines multiplier.
 
-⚙️ 3. Peg Map Logic
+4. Reveal Phase  
+Server reveals serverSeed. Anyone can:  
+• Recompute SHA256(serverSeed) → must match commitHex  
+• Recompute PRNG  
+• Replay Plinko path  
+• Verify final bin and payout  
 
-A 13-column triangular grid determines bounce outcomes.
+5. Deterministic Output  
+Uses float32-like fixed precision. Same inputs always produce identical results, ensuring full reproducibility.
 
-Each step uses PRNG bits (0 = left, 1 = right).
+## 🤖 Where AI Helped
+AI was used for optimizing Canvas animation performance, integrating confetti, validating the HMAC commit-reveal flow across backend/frontend, and refactoring TypeScript logic. All fairness design, gameplay logic, UI structure, and architectural decisions were manually implemented.
 
-The final bin index decides payout multiplier.
+## 🕓 Development Time Log
+Backend + Prisma setup: ~3 hours  
+Canvas physics + animation: ~5 hours  
+Verifier Modal + verify page: ~2 hours  
+Fairness debugging + HMAC validation: ~2 hours  
+UI polish, confetti, audio: ~2 hours  
+Total ~14 hours
 
-4.  Reveal Phase
+## 🚧 Possible Future Enhancements
+• Leaderboard + wallet system with Prisma relations  
+• Physics upgrade via Matter.js  
+• Jest fairness test suite   
+• Mobile-optimized UI  
+• Localization/internationalization support  
 
-Once complete, backend reveals the original serverSeed.
+## 🧠 Summary
+This project demonstrates a full-stack architecture using React, Express, Prisma, and PostgreSQL. It includes a deterministic, cryptographically secure fairness engine using HMAC-SHA256 commit–reveal, a reproducible PRNG-driven Plinko game engine, a transparent verification interface, and smooth Canvas-driven visuals. The entire system is engineered for fairness, transparency, reproducibility, and clean full-stack execution.
 
-Anyone can verify by recalculating the commit and replaying the path.
-
-🧩 5. Rounding & Determinism
-
-PRNG output is fixed-precision (float32-like).
-
-Identical seeds always reproduce the same bin — ensuring verifiability.
-
-🤖 Where AI Was Used
-
-AI was used selectively for complex implementation tasks, such as:
-
-Optimizing canvas physics animations with requestAnimationFrame.
-
-Integrating confetti bursts (canvas-confetti) on round completion.
-
-Ensuring correctness of the HMAC-SHA256 Commit-Reveal flow between Node.js and browser.
-
-Refactoring TypeScript types and React state logic for maintainability.
-
-All fairness design, UI structure, and gameplay flow were conceptualized and implemented manually.
-
-🕓 Development Time Log (Approx.)
-Phase Duration Notes
-Backend + Prisma setup 3 hrs Schema, DB, and routes
-Frontend Canvas simulation 5 hrs Physics + animation
-Verifier Modal & /verify page 2 hrs Manual verification UI
-Debugging + fairness validation 2 hrs HMAC / seed tests
-UI polish, confetti, audio 2 hrs Finishing touches
-
-Total: ~14 hours across 2 days.
-
-🚧 If I Had More Time
-
-Add leaderboard + user wallet system with Prisma relations.
-
-Improve physics realism using Matter.js.
-
-Implement Jest-based fairness test suite.
-
-Deploy backend (Render) and frontend (Vercel) for production.
-
-Add mobile-responsive layout and localization support.
-
-🧠 Summary
-
-This project demonstrates:
-
-End-to-end full-stack architecture (frontend + backend + database).
-
-Cryptographic fairness via HMAC commit-reveal.
-
-Smooth visual simulation using Canvas and TypeScript.
-
-Clean Prisma schema and reproducible round logic.
-
-Transparent verification for every round.
-
-Built with passion for fair, transparent gaming systems and clean full-stack engineering.
